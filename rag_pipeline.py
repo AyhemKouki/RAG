@@ -134,22 +134,3 @@ def ask_question(question):
         final_response += f"- {source}\n"
 
     return final_response
-
-# MAIN LOOP
-
-if __name__ == "__main__":
-
-    print("\n===== AI Academic Assistant =====\n")
-
-    while True:
-
-        question = input("\nAsk a question (or type 'exit'): ")
-
-        if question.lower() == "exit":
-            break
-
-        answer = ask_question(question)
-
-        print("\n=================================\n")
-        print(answer)
-        print("\n=================================\n")
