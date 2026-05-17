@@ -2,75 +2,104 @@ from langchain_chroma import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
-
+from sentence_transformers import CrossEncoder
 from dotenv import load_dotenv
 import os
 
-from ingest import db , embeddings
-
-# CONFIGURATION
-
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# CONFIG
+CHROMA_DB_DIR = "data/chroma_db"
+EMBEDDING_MODEL = "sentence-transformers/all-mpnet-base-v2"
+TOP_K = 3
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-TOP_K = 3
+# ---------------------------
+# EMBEDDINGS
+# ---------------------------
+embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-# LOAD LLM
+# ---------------------------
+# RERANKER (optional but powerful)
+# ---------------------------
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-print("Loading LLM...")
-
+# ---------------------------
+# LLM
+# ---------------------------
 llm = ChatGroq(
     model=GROQ_MODEL,
-    api_key=GROQ_API_KEY
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
-# PROMPT TEMPLATE
-
+# ---------------------------
+# PROMPT
+# ---------------------------
 template = """
-Tu es un assistant pedagogique.
+Tu es un assistant pédagogique.
 
-Tu dois repondre UNIQUEMENT a partir du contexte fourni.
+Réponds uniquement avec le contexte fourni.
 
-Consignes importantes :
-- Reponds en francais.
-- Si l'information n'est pas presente dans le contexte, dis clairement :
-  "Je ne trouve pas cette information dans les documents fournis."
-- Donne une reponse claire, structuree et concise.
-- Cite les sources utilisees a la fin.
+Règles:
+- Réponds en français
+- Si l'information n'existe pas dans le contexte, dis:
+  "Je ne trouve pas cette information dans ce document."
+- Sois clair et structuré
+- Cite les sources à la fin
 
-Contexte :
+Contexte:
 {context}
 
-Question :
+Question:
 {question}
 
-Reponse :
+Réponse:
 """
 
 prompt = PromptTemplate.from_template(template)
 
-# RETRIEVAL FUNCTION
-
-def retrieve_documents(query):
-
-    docs = db.similarity_search(
-        query,
-        k=TOP_K
+# ---------------------------
+# LOAD COLLECTION PER PDF
+# ---------------------------
+def load_db(collection_name: str):
+    return Chroma(
+        collection_name=collection_name,
+        embedding_function=embeddings,
+        persist_directory=CHROMA_DB_DIR
     )
+
+# ---------------------------
+# RETRIEVAL
+# ---------------------------
+def retrieve_documents(query, collection_name):
+
+    db = load_db(collection_name)
+
+    docs = db.similarity_search(query, k=10)
 
     return docs
 
-# BUILD CONTEXT
+# ---------------------------
+# RERANKING
+# ---------------------------
+def rerank(query, docs):
 
+    pairs = [(query, doc.page_content) for doc in docs]
+    scores = reranker.predict(pairs)
+
+    ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
+
+    return [doc for doc, _ in ranked[:TOP_K]]
+
+# ---------------------------
+# CONTEXT BUILDER
+# ---------------------------
 def build_context(docs):
 
     context = ""
 
     for doc in docs:
-
         source = doc.metadata.get("source", "Unknown")
 
         context += f"\n[Source: {source}]\n"
@@ -79,58 +108,51 @@ def build_context(docs):
 
     return context
 
-# EXTRACT SOURCES
-
+# ---------------------------
+# SOURCE EXTRACTOR
+# ---------------------------
 def extract_sources(docs):
 
-    sources = []
+    return list(set(
+        doc.metadata.get("source", "Unknown")
+        for doc in docs
+    ))
 
-    for doc in docs:
+# ---------------------------
+# MAIN ASK FUNCTION
+# ---------------------------
+def ask_question(question, collection_name):
 
-        source = doc.metadata.get("source", "Unknown")
+    print("\nSearching documents...")
 
-        if source not in sources:
-            sources.append(source)
-
-    return sources
-
-# ASK FUNCTION
-
-def ask_question(question):
-
-    print("\nSearching relevant documents...\n")
-
-    docs = retrieve_documents(question)
+    # 1. retrieve
+    docs = retrieve_documents(question, collection_name)
 
     if not docs:
+        return "Aucun document trouvé."
 
-        return "Aucun document pertinent trouve."
+    # 2. rerank (important boost in accuracy)
+    docs = rerank(question, docs)
 
-    # BUILD CONTEXT
-
+    # 3. build context
     context = build_context(docs)
 
-    # BUILD FINAL PROMPT
-
+    # 4. prompt
     final_prompt = prompt.format(
         context=context,
         question=question
     )
 
-    # GENERATE RESPONSE
-
+    # 5. LLM call
     response = llm.invoke(final_prompt)
 
-    # SOURCES
-
+    # 6. sources
     sources = extract_sources(docs)
 
-    final_response = response.content
+    final_answer = response.content
+    final_answer += "\n\nSources:\n"
 
-    final_response += "\n\nSources :\n"
+    for s in sources:
+        final_answer += f"- {s}\n"
 
-    for source in sources:
-
-        final_response += f"- {source}\n"
-
-    return final_response
+    return final_answer

@@ -1,28 +1,30 @@
 from rag_pipeline import ask_question
+import os
 
 def main():
 
-    print("\n======================================")
-    print("      AI Academic Assistant")
-    print("======================================\n")
+    print("\nAvailable PDFs:\n")
+
+    pdfs = [f.replace(".pdf", "") for f in os.listdir("data/pdfs") if f.endswith(".pdf")]
+
+    for p in pdfs:
+        print("-", p)
+
+    collection = input("\nSelect PDF: ").strip().lower()
 
     while True:
 
-        question = input("\nAsk a question (or type 'exit'): ")
+        q = input("\nQuestion (exit): ")
 
-        if question.lower() == "exit":
-            print("\nGoodbye!\n")
+        if q == "exit":
             break
 
-        if not question.strip():
-            print("Please enter a valid question.\n")
-            continue
-        else:
-            answer = ask_question(question)
+        answer = ask_question(q, collection)
 
-            print("\n--------------------------------------")
-            print(answer)
-            print("--------------------------------------\n")
+        print("\n----------------------")
+        print(answer)
+        print("----------------------\n")
+
 
 if __name__ == "__main__":
     main()
