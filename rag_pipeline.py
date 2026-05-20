@@ -131,7 +131,7 @@ def ask_question(question, collection_name):
     if not docs:
         return "Aucun document trouvé."
 
-    # 2. rerank (important boost in accuracy)
+    # 2. rerank
     docs = rerank(question, docs)
 
     # 3. build context
